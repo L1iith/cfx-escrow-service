@@ -13,6 +13,7 @@ type Config struct {
 	ListenAddress    string
 	APISecret        string
 	DataDirectory    string
+	Repositories     map[string]Repository
 	Repository       string
 	RepositoryURL    string
 	Branch           string
@@ -27,6 +28,14 @@ type Config struct {
 	GitAuthorEmail   string
 	JobTimeout       time.Duration
 	MaxBodyBytes     int64
+}
+
+type Repository struct {
+	URL              string `json:"url"`
+	Branch           string `json:"branch"`
+	ResourceRoot     string `json:"resource_root"`
+	MirrorRepository string `json:"mirror_repository"`
+	MirrorBranch     string `json:"mirror_branch"`
 }
 
 func Load() (Config, error) {
@@ -68,7 +77,71 @@ func Load() (Config, error) {
 	if len(cfg.UploaderArgs) == 0 {
 		return Config{}, errors.New("UPLOADER_ARGS_JSON cannot be empty")
 	}
+	cfg.Repositories = map[string]Repository{
+		cfg.Repository: {
+			URL:              cfg.RepositoryURL,
+			Branch:           cfg.Branch,
+			ResourceRoot:     cfg.ResourceRoot,
+			MirrorRepository: cfg.MirrorRepository,
+			MirrorBranch:     cfg.MirrorBranch,
+		},
+	}
+	if err := loadAdditionalRepositories(&cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func loadAdditionalRepositories(cfg *Config) error {
+	raw := strings.TrimSpace(os.Getenv("ADDITIONAL_REPOSITORIES_JSON"))
+	if raw == "" {
+		return nil
+	}
+	var repositories map[string]Repository
+	if err := json.Unmarshal([]byte(raw), &repositories); err != nil {
+		return errors.New("ADDITIONAL_REPOSITORIES_JSON must be a JSON object")
+	}
+	for name, repository := range repositories {
+		name = strings.TrimSpace(name)
+		repository.URL = strings.TrimSpace(repository.URL)
+		repository.Branch = strings.TrimSpace(repository.Branch)
+		repository.ResourceRoot = strings.TrimSpace(repository.ResourceRoot)
+		repository.MirrorRepository = strings.TrimSpace(repository.MirrorRepository)
+		repository.MirrorBranch = strings.TrimSpace(repository.MirrorBranch)
+		if name == "" || repository.URL == "" {
+			return errors.New("additional repository names and URLs are required")
+		}
+		if _, exists := cfg.Repositories[name]; exists {
+			return errors.New("additional repository duplicates the primary repository")
+		}
+		if repository.Branch == "" {
+			repository.Branch = "main"
+		}
+		if repository.ResourceRoot == "" {
+			repository.ResourceRoot = "."
+		}
+		if repository.MirrorBranch == "" {
+			repository.MirrorBranch = "main"
+		}
+		cfg.Repositories[name] = repository
+	}
+	return nil
+}
+
+func (c Config) RepositoryConfig(name string) (Repository, bool) {
+	if repository, exists := c.Repositories[name]; exists {
+		return repository, true
+	}
+	if name != c.Repository {
+		return Repository{}, false
+	}
+	return Repository{
+		URL:              c.RepositoryURL,
+		Branch:           c.Branch,
+		ResourceRoot:     c.ResourceRoot,
+		MirrorRepository: c.MirrorRepository,
+		MirrorBranch:     c.MirrorBranch,
+	}, true
 }
 
 func value(name, fallback string) string {

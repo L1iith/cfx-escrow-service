@@ -29,10 +29,14 @@ func New(cfg config.Config) *Runner {
 }
 
 func (r *Runner) Process(ctx context.Context, job *model.Job, logf func(string)) ([]model.ResourceResult, error) {
-	if job.Request.Branch == "" {
-		job.Request.Branch = r.cfg.Branch
+	repository, exists := r.cfg.RepositoryConfig(job.Request.Repository)
+	if !exists {
+		return nil, errors.New("repository is not allowed")
 	}
-	if err := r.validate(job.Request); err != nil {
+	if job.Request.Branch == "" {
+		job.Request.Branch = repository.Branch
+	}
+	if err := r.validate(job.Request, repository); err != nil {
 		return nil, err
 	}
 	workRoot := filepath.Join(r.cfg.DataDirectory, "work")
@@ -45,7 +49,7 @@ func (r *Runner) Process(ctx context.Context, job *model.Job, logf func(string))
 	}
 	defer os.RemoveAll(workDir)
 
-	if err := r.command(ctx, "", logf, "git", "clone", "--no-checkout", "--branch", job.Request.Branch, "--single-branch", r.cfg.RepositoryURL, workDir); err != nil {
+	if err := r.command(ctx, "", logf, "git", "clone", "--no-checkout", "--branch", job.Request.Branch, "--single-branch", repository.URL, workDir); err != nil {
 		return nil, err
 	}
 	target := "origin/" + job.Request.Branch
@@ -59,7 +63,7 @@ func (r *Runner) Process(ctx context.Context, job *model.Job, logf func(string))
 	resourceDirs := make([]string, 0, len(job.Request.Resources))
 	resourceMarkers := make([]string, 0, len(job.Request.Resources))
 	for _, resource := range job.Request.Resources {
-		relative, err := r.resourcePath(resource)
+		relative, err := r.resourcePath(repository.ResourceRoot, resource)
 		if err != nil {
 			return nil, err
 		}
@@ -82,13 +86,13 @@ func (r *Runner) Process(ctx context.Context, job *model.Job, logf func(string))
 		}
 	}
 	if job.Request.Operation != model.OperationUpload {
-		if r.cfg.MirrorRepository == "" || r.cfg.MirrorToken == "" {
+		if repository.MirrorRepository == "" || r.cfg.MirrorToken == "" {
 			return nil, errors.New("mirror operation requested but mirror configuration is incomplete")
 		}
 		args = append(args,
-			"--mirror-repo", r.cfg.MirrorRepository,
+			"--mirror-repo", repository.MirrorRepository,
 			"--mirror-token", r.cfg.MirrorToken,
-			"--mirror-branch", r.cfg.MirrorBranch,
+			"--mirror-branch", repository.MirrorBranch,
 			"--workspace", workDir,
 		)
 	}
@@ -114,11 +118,8 @@ func (r *Runner) Process(ctx context.Context, job *model.Job, logf func(string))
 	return results, nil
 }
 
-func (r *Runner) validate(request model.JobRequest) error {
-	if request.Repository != r.cfg.Repository {
-		return errors.New("repository is not allowed")
-	}
-	if request.Branch != r.cfg.Branch {
+func (r *Runner) validate(request model.JobRequest, repository config.Repository) error {
+	if request.Branch != repository.Branch {
 		return errors.New("branch is not allowed")
 	}
 	if request.Commit != "" && !commitPattern.MatchString(request.Commit) {
@@ -135,15 +136,15 @@ func (r *Runner) validate(request model.JobRequest) error {
 	return nil
 }
 
-func (r *Runner) resourcePath(resource string) (string, error) {
+func (r *Runner) resourcePath(resourceRoot, resource string) (string, error) {
 	resource = filepath.Clean(filepath.FromSlash(strings.TrimSpace(resource)))
 	if resource == "." || filepath.IsAbs(resource) || resource == ".." || strings.HasPrefix(resource, ".."+string(filepath.Separator)) {
 		return "", errors.New("invalid resource path")
 	}
-	root := filepath.Clean(filepath.FromSlash(r.cfg.ResourceRoot))
+	root := filepath.Clean(filepath.FromSlash(resourceRoot))
 	relative, err := filepath.Rel(root, resource)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("resource path must be inside %s", r.cfg.ResourceRoot)
+		return "", fmt.Errorf("resource path must be inside %s", resourceRoot)
 	}
 	return resource, nil
 }

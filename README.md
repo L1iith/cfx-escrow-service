@@ -104,6 +104,7 @@ The container runs as UID and GID `10001`. The `data` directory must be writable
 | `DATA_DIRECTORY` | No | `/var/lib/cfx-escrow-service` | Persistent state and temporary clones |
 | `SOURCE_REPOSITORY` | Yes | | Allowed `owner/repository` identifier |
 | `SOURCE_REPOSITORY_URL` | Yes | | Git clone URL |
+| `ADDITIONAL_REPOSITORIES_JSON` | No | `{}` | Additional allowed repositories and their clone, branch, resource-root, and mirror settings |
 | `SOURCE_BRANCH` | No | `main` | Allowed source branch |
 | `RESOURCE_ROOT` | No | `server-files/resources` | Allowed resource path root |
 | `UPLOADER_BINARY` | No | `node` | Uploader executable |
