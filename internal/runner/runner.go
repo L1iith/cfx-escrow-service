@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,7 +50,7 @@ func (r *Runner) Process(ctx context.Context, job *model.Job, logf func(string))
 	}
 	defer os.RemoveAll(workDir)
 
-	if err := r.command(ctx, "", logf, "git", "clone", "--no-checkout", "--branch", job.Request.Branch, "--single-branch", repository.URL, workDir); err != nil {
+	if err := r.cloneRepository(ctx, job.Request.Repository, repository.URL, job.Request.Branch, workDir, logf); err != nil {
 		return nil, err
 	}
 	target := "origin/" + job.Request.Branch
@@ -116,6 +117,42 @@ func (r *Runner) Process(ctx context.Context, job *model.Job, logf func(string))
 		}
 	}
 	return results, nil
+}
+
+func (r *Runner) cloneRepository(ctx context.Context, name, url, branch, workDir string, logf func(string)) error {
+	cacheRoot := filepath.Join(r.cfg.DataDirectory, "repositories")
+	if err := os.MkdirAll(cacheRoot, 0o750); err != nil {
+		return err
+	}
+	cacheDir := filepath.Join(cacheRoot, repositoryCacheName(name))
+	if _, err := os.Stat(cacheDir); errors.Is(err, os.ErrNotExist) {
+		logf("creating repository cache")
+		stagingDir, err := os.MkdirTemp(cacheRoot, "repository-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(stagingDir)
+		stagingRepository := filepath.Join(stagingDir, "mirror.git")
+		if err := r.command(ctx, "", logf, "git", "clone", "--mirror", url, stagingRepository); err != nil {
+			return err
+		}
+		if err := os.Rename(stagingRepository, cacheDir); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		logf("updating repository cache")
+		if err := r.command(ctx, "", logf, "git", "-C", cacheDir, "remote", "update", "--prune"); err != nil {
+			return err
+		}
+	}
+	return r.command(ctx, "", logf, "git", "clone", "--no-checkout", "--branch", branch, "--single-branch", "--reference-if-able", cacheDir, url, workDir)
+}
+
+func repositoryCacheName(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return fmt.Sprintf("%x.git", sum[:16])
 }
 
 func (r *Runner) validate(request model.JobRequest, repository config.Repository) error {

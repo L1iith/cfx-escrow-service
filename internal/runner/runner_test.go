@@ -53,6 +53,16 @@ func TestRepositoryValidation(t *testing.T) {
 	}
 }
 
+func TestRepositoryCacheName(t *testing.T) {
+	current := repositoryCacheName("owner/assets")
+	if current != repositoryCacheName("owner/assets") {
+		t.Fatal("expected stable cache name")
+	}
+	if filepath.Base(current) != current || filepath.Ext(current) != ".git" {
+		t.Fatal("unexpected cache name")
+	}
+}
+
 func TestReadAssetID(t *testing.T) {
 	directory := t.TempDir()
 	numeric := filepath.Join(directory, "numeric")
