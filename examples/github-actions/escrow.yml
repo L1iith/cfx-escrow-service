@@ -1,0 +1,143 @@
+name: escrow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server-files/resources/**'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation
+        required: true
+        default: upload_and_mirror
+        type: choice
+        options:
+          - upload_and_mirror
+          - upload
+          - mirror
+      resources:
+        description: Resource paths separated by new lines
+        required: false
+        type: string
+      all-marked:
+        description: Submit every resource containing .escrow
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Build request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          OPERATION: ${{ inputs.operation || 'upload_and_mirror' }}
+          EXPLICIT_RESOURCES: ${{ inputs.resources || '' }}
+          ALL_MARKED: ${{ inputs.all-marked || 'false' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          root = pathlib.Path("server-files/resources")
+          explicit = [line.strip() for line in os.environ["EXPLICIT_RESOURCES"].splitlines() if line.strip()]
+          resources = set(explicit)
+
+          if not resources and os.environ["ALL_MARKED"].lower() == "true":
+              resources = {str(path.parent).replace("\\", "/") for path in root.rglob(".escrow")}
+
+          if not resources and os.environ["EVENT_NAME"] == "push":
+              output = subprocess.check_output(
+                  ["git", "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "HEAD"],
+                  text=True,
+              )
+              for changed in output.splitlines():
+                  current = pathlib.Path(changed).parent
+                  while current != pathlib.Path("."):
+                      if (current / ".escrow").is_file():
+                          resources.add(str(current).replace("\\", "/"))
+                          break
+                      current = current.parent
+
+          operation = os.environ["OPERATION"]
+          if operation != "mirror" and not resources:
+              raise SystemExit("no resources selected")
+
+          payload = {
+              "repository": os.environ["REPOSITORY"],
+              "branch": os.environ["BRANCH"],
+              "commit": os.environ["COMMIT_SHA"],
+              "operation": operation,
+              "resources": sorted(resources),
+          }
+          pathlib.Path("request.json").write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+          PY
+
+      - name: Submit and wait
+        env:
+          SERVICE_URL: ${{ secrets.ESCROW_SERVICE_URL }}
+          SERVICE_SECRET: ${{ secrets.ESCROW_SERVICE_SECRET }}
+          IDEMPOTENCY_KEY: ${{ github.repository }}:${{ github.sha }}:${{ inputs.operation || 'upload_and_mirror' }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import hmac
+          import json
+          import os
+          import pathlib
+          import time
+          import urllib.error
+          import urllib.request
+
+          base = os.environ["SERVICE_URL"].rstrip("/")
+          secret = os.environ["SERVICE_SECRET"].encode()
+
+          def request(method, path, body=b"", headers=None):
+              timestamp = str(int(time.time()))
+              signature = hmac.new(secret, timestamp.encode() + b"\n" + body, hashlib.sha256).hexdigest()
+              current = {
+                  "Content-Type": "application/json",
+                  "X-Escrow-Timestamp": timestamp,
+                  "X-Escrow-Signature": signature,
+              }
+              if headers:
+                  current.update(headers)
+              value = urllib.request.Request(base + path, data=body if method == "POST" else None, headers=current, method=method)
+              try:
+                  with urllib.request.urlopen(value, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  raise SystemExit(error.read().decode())
+
+          body = pathlib.Path("request.json").read_bytes()
+          job = request("POST", "/v1/jobs", body, {"Idempotency-Key": os.environ["IDEMPOTENCY_KEY"]})
+          job_id = job["id"]
+          print("job", job_id)
+
+          while True:
+              current = request("GET", f"/v1/jobs/{job_id}")
+              status = current["status"]
+              print("status", status)
+              if status == "succeeded":
+                  print(json.dumps(current.get("results", []), indent=2))
+                  break
+              if status == "failed":
+                  print("\n".join(current.get("logs", [])))
+                  raise SystemExit(current.get("error", "job failed"))
+              time.sleep(15)
+          PY
