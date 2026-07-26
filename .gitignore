@@ -2,4 +2,7 @@
 /dist/
 /coverage.out
 /.env
+/data/
+/deployment.env
+/uploader/
 *.exe

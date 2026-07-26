@@ -1,0 +1,34 @@
+name: cfx-escrow-service
+
+services:
+  escrow:
+    image: cfx-escrow-service:local
+    build:
+      context: .
+      additional_contexts:
+        uploader: ${UPLOADER_CONTEXT:-./uploader}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ${ESCROW_ENV_FILE:-./deployment.env}
+    ports:
+      - ${ESCROW_BIND_ADDRESS:-127.0.0.1:8080}:8080
+    volumes:
+      - ${ESCROW_DATA_DIRECTORY:-./data}:/var/lib/cfx-escrow-service
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - require("http").get("http://127.0.0.1:8080/healthz",response=>process.exit(response.statusCode===200?0:1)).on("error",()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

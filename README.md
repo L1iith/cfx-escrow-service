@@ -73,6 +73,28 @@ View logs:
 journalctl -u cfx-escrow-service -f
 ```
 
+## Docker Compose
+
+Place the uploader source in `uploader`, then create the runtime configuration:
+
+```bash
+cp deploy/docker.env.example deployment.env
+mkdir -p data
+```
+
+Set the production values in `deployment.env`, then build and start the service:
+
+```bash
+docker compose build
+docker compose up -d
+docker compose ps
+docker compose logs --tail=100 escrow
+```
+
+The default published address is `127.0.0.1:8080`. Set `ESCROW_BIND_ADDRESS` in the Compose environment when a reverse proxy needs a different bind address.
+
+The container runs as UID and GID `10001`. The `data` directory must be writable by that identity and can contain Git credential configuration required to clone and push private repositories.
+
 ## Configuration
 
 | Variable | Required | Default | Purpose |
