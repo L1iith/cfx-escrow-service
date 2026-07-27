@@ -11,6 +11,10 @@ services:
     init: true
     env_file:
       - ${ESCROW_ENV_FILE:-./deployment.env}
+    environment:
+      # Asset mirror repositories can exceed the container's /tmp tmpfs.
+      # Keep transient clones on the persistent data volume instead.
+      TMPDIR: /var/lib/cfx-escrow-service/work
     ports:
       - ${ESCROW_BIND_ADDRESS:-127.0.0.1:8080}:8080
     volumes:
