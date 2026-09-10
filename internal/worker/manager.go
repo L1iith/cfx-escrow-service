@@ -157,6 +157,14 @@ func (m *Manager) run(parent context.Context, id string) {
 	<-logsDone
 	finished := time.Now().UTC()
 	m.store.Update(id, func(current *model.Job) {
+		if processErr != nil && parent.Err() != nil {
+			current.Status = model.StatusQueued
+			current.StartedAt = nil
+			current.FinishedAt = nil
+			current.Results = nil
+			current.Error = ""
+			return
+		}
 		current.FinishedAt = &finished
 		current.Results = results
 		if processErr != nil {

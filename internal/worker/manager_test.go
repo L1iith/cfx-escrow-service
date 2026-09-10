@@ -16,6 +16,16 @@ func (processorStub) Process(_ context.Context, job *model.Job, logf func(string
 	return []model.ResourceResult{{Path: job.Request.Resources[0], AssetID: 42}}, nil
 }
 
+type blockingProcessor struct {
+	started chan struct{}
+}
+
+func (processor blockingProcessor) Process(ctx context.Context, _ *model.Job, _ func(string)) ([]model.ResourceResult, error) {
+	close(processor.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func TestManagerProcessesSubmittedJob(t *testing.T) {
 	jobStore, err := store.Open(t.TempDir())
 	if err != nil {
@@ -55,4 +65,36 @@ func TestManagerProcessesSubmittedJob(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("job did not finish")
+}
+
+func TestManagerRequeuesInterruptedJob(t *testing.T) {
+	jobStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	manager := NewManager(jobStore, blockingProcessor{started: started}, time.Minute)
+	manager.Start(context.Background())
+	job, err := manager.Submit(model.JobRequest{
+		Repository: "owner/repo",
+		Branch:     "main",
+		Operation:  model.OperationUpload,
+		Resources:  []string{"resources/example"},
+	}, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("job did not start")
+	}
+	manager.Stop()
+	current, err := jobStore.Get(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != model.StatusQueued || current.StartedAt != nil || current.FinishedAt != nil || current.Error != "" {
+		t.Fatalf("job was not requeued: %#v", current)
+	}
 }
