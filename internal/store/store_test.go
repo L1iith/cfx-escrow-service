@@ -75,3 +75,29 @@ func TestStoreCapsLogs(t *testing.T) {
 		t.Fatal("expected newest log to be retained")
 	}
 }
+
+func TestStoreAppendsLogBatch(t *testing.T) {
+	directory := t.TempDir()
+	current, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := &model.Job{ID: "job-1", Status: model.StatusQueued, CreatedAt: time.Now().UTC()}
+	if _, _, err := current.Create(job); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.AppendLogs(job.ID, []string{"first", "second", "third"}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := reopened.Get(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Logs) != 3 || loaded.Logs[0] != "first" || loaded.Logs[2] != "third" {
+		t.Fatalf("unexpected logs: %#v", loaded.Logs)
+	}
+}

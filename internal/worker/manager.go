@@ -120,9 +120,41 @@ func (m *Manager) run(parent context.Context, id string) {
 	}
 	ctx, cancel := context.WithTimeout(parent, m.timeout)
 	defer cancel()
+	logLines := make(chan string, 4096)
+	logsDone := make(chan struct{})
+	go func() {
+		defer close(logsDone)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		batch := make([]string, 0, 100)
+		flush := func() {
+			if len(batch) == 0 {
+				return
+			}
+			m.store.AppendLogs(id, batch)
+			batch = make([]string, 0, 100)
+		}
+		for {
+			select {
+			case line, open := <-logLines:
+				if !open {
+					flush()
+					return
+				}
+				batch = append(batch, line)
+				if len(batch) >= 100 {
+					flush()
+				}
+			case <-ticker.C:
+				flush()
+			}
+		}
+	}()
 	results, processErr := m.processor.Process(ctx, job, func(line string) {
-		m.store.AppendLog(id, line)
+		logLines <- line
 	})
+	close(logLines)
+	<-logsDone
 	finished := time.Now().UTC()
 	m.store.Update(id, func(current *model.Job) {
 		current.FinishedAt = &finished

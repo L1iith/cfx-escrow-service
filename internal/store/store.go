@@ -102,8 +102,15 @@ func (s *Store) Update(id string, apply func(*model.Job)) (*model.Job, error) {
 }
 
 func (s *Store) AppendLog(id, line string) error {
+	return s.AppendLogs(id, []string{line})
+}
+
+func (s *Store) AppendLogs(id string, lines []string) error {
+	if len(lines) == 0 {
+		return nil
+	}
 	_, err := s.Update(id, func(job *model.Job) {
-		job.Logs = append(job.Logs, line)
+		job.Logs = append(job.Logs, lines...)
 		if len(job.Logs) > 1000 {
 			job.Logs = append([]string(nil), job.Logs[len(job.Logs)-1000:]...)
 		}
