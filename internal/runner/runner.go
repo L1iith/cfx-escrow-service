@@ -92,13 +92,16 @@ func (r *Runner) Process(ctx context.Context, job *model.Job, logf func(string))
 		}
 		args = append(args,
 			"--mirror-repo", repository.MirrorRepository,
-			"--mirror-token", r.cfg.MirrorToken,
 			"--mirror-branch", repository.MirrorBranch,
 			"--workspace", workDir,
 		)
 	}
 
-	env := append(os.Environ(), "CFX_FORUM_COOKIE="+r.cfg.CFXForumCookie)
+	env := append(os.Environ(),
+		"CFX_FORUM_COOKIE="+r.cfg.CFXForumCookie,
+		"CFX_MIRROR_TOKEN="+r.cfg.MirrorToken,
+		"CFX_MIRROR_CACHE_DIR="+filepath.Join(r.cfg.DataDirectory, "mirrors"),
+	)
 	if err := r.commandEnv(ctx, workDir, env, logf, r.cfg.UploaderBinary, args...); err != nil {
 		return nil, err
 	}
